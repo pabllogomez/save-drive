@@ -1,0 +1,11 @@
+{
+  "name": "Save Drive",
+  "author": "pabllogomez",
+  "flags": ["debug", "_root"],
+  "api_version": 1,
+  "publish": {
+    "tags": ["root", "root"],
+    "description": "Decky example plugin.",
+    "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/PluginLoader"
+  }
+}
