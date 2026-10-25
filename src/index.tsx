@@ -49,11 +49,40 @@ const backupNow = callable<[], any[]>("backup_now");
 const listSnapshots = callable<[string], Snapshot[]>("list_snapshots");
 const restoreSnapshot = callable<[string, string], any>("restore_snapshot");
 
+function OAuthCodeModal({ url, code, onClose }: { url: string; code: string; onClose: () => void }) {
+  return (
+    <div style={{ padding: 20, minWidth: 300 }}>
+      <div className={staticClasses.Title} style={{ marginBottom: 12 }}>Sign in with Google</div>
+      <div style={{ fontSize: "0.9em", marginBottom: 12 }}>
+        On your phone/PC open:
+      </div>
+      <div style={{ fontSize: "1.1em", fontWeight: "bold", marginBottom: 12, wordBreak: "break-all" }}>
+        {url}
+      </div>
+      <div style={{ fontSize: "0.9em", marginBottom: 8 }}>Enter this code:</div>
+      <div
+        style={{
+          fontSize: "2em",
+          fontWeight: "bold",
+          letterSpacing: 4,
+          textAlign: "center",
+          padding: 12,
+          background: "#1a1a1a",
+          borderRadius: 8,
+          marginBottom: 16,
+        }}
+      >
+        {code}
+      </div>
+      <DialogButton onClick={onClose}>Close</DialogButton>
+    </div>
+  );
+}
+
 function AuthSection() {
   const [status, setStatus] = useState<{ authenticated: boolean; email?: string } | null>(null);
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
-  const [oauth, setOauth] = useState<{ verification_url: string; user_code: string } | null>(null);
 
   const refresh = async () => setStatus(await getCredentialsStatus());
 
@@ -69,7 +98,6 @@ function AuthSection() {
     const listener = addEventListener("oauth_complete", (ev: any) => {
       if (ev.success) {
         toaster.toast({ title: "Save Drive", body: "Google login completed" });
-        setOauth(null);
         refresh();
       } else {
         toaster.toast({ title: "Save Drive", body: `Login failed: ${ev.error || "unknown"}` });
@@ -112,7 +140,13 @@ function AuthSection() {
                     await setCredentials(clientId, clientSecret);
                   }
                   const info = await startOAuth();
-                  setOauth(info);
+                  showModal(
+                    <OAuthCodeModal
+                      url={info.verification_url}
+                      code={info.user_code}
+                      onClose={() => {}}
+                    />
+                  );
                   toaster.toast({ title: "Save Drive", body: `Code: ${info.user_code}` });
                 } catch (e: any) {
                   toaster.toast({ title: "Save Drive", body: `OAuth error: ${e.message || e}` });
@@ -123,13 +157,6 @@ function AuthSection() {
             </ButtonItem>
           </PanelSectionRow>
         </>
-      )}
-      {oauth && (
-        <PanelSectionRow>
-          <div style={{ fontSize: "0.85em", padding: "6px 0" }}>
-            Open {oauth.verification_url} and enter: <b>{oauth.user_code}</b>
-          </div>
-        </PanelSectionRow>
       )}
       {status?.authenticated && (
         <PanelSectionRow>

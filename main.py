@@ -69,6 +69,7 @@ class Plugin:
                 raise RuntimeError("Missing client_id or client_secret")
             resp = gdrive.start_device_auth(creds["client_id"])
             decky.logger.info(f"device auth response keys={list(resp.keys())}")
+            decky.logger.info(f"OAUTH_USER_CODE url={resp.get('verification_url')} code={resp.get('user_code')}")
             # spawn polling task
             asyncio.create_task(self._poll_oauth(resp))
             return {
