@@ -91,7 +91,16 @@ def _installed_steam_games() -> list[dict]:
             appstate = data.get("AppState", {})
             appid = appstate.get("appid")
             name = appstate.get("name")
+            installdir = appstate.get("installdir")
             if not appid or appid in seen:
+                continue
+            # Skip Steam tools/protons/runtimes
+            if installdir:
+                install_path = lib / "common" / installdir
+                if (install_path / "toolmanifest.vdf").exists():
+                    continue
+            lower_name = (name or "").lower()
+            if "steamworks common redistributables" in lower_name:
                 continue
             seen.add(appid)
             games.append({
