@@ -1,57 +1,158 @@
-import os
+"""Save Drive Decky plugin backend."""
 
-# The decky plugin module is located at decky-loader/plugin
-# For easy intellisense checkout the decky-loader code repo
-# and add the `decky-loader/plugin/imports` path to `python.analysis.extraPaths` in `.vscode/settings.json`
-import decky
+import os
+import sys
 import asyncio
+from pathlib import Path
+
+# Ensure bundled py_modules are importable
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "py_modules"))
+
+import decky
+
+from savedrive import store
+from savedrive import gdrive
+from savedrive import scanner
+from savedrive import backup
+from savedrive import scheduler
+
 
 class Plugin:
-    # A normal method. It can be called from the TypeScript side using @decky/api.
-    async def add(self, left: int, right: int) -> int:
-        return left + right
+    async def ping(self) -> str:
+        return "pong"
 
-    async def long_running(self):
-        await asyncio.sleep(15)
-        # Passing through a bunch of random data, just as an example
-        await decky.emit("timer_event", "Hello from the backend!", True, 2)
+    # ---------- Settings ----------
 
-    # Asyncio-compatible long-running code, executed in a task when the plugin is loaded
+    async def get_settings(self) -> dict:
+        return store.load_settings()
+
+    async def set_settings(self, settings: dict) -> bool:
+        store.save_settings(settings)
+        return True
+
+    # ---------- Credentials ----------
+
+    async def get_credentials_status(self) -> dict:
+        creds = store.load_credentials()
+        has = bool(creds.get("refresh_token"))
+        email = None
+        if has:
+            try:
+                tokens = gdrive.refresh_access_token(
+                    creds["client_id"], creds["client_secret"], creds["refresh_token"]
+                )
+                drive = gdrive.GDrive(tokens["access_token"])
+                email = drive.get_user_email()
+            except Exception as e:
+                decky.logger.warning(f"Failed to verify credentials: {e}")
+        return {"authenticated": has, "email": email}
+
+    async def set_credentials(self, client_id: str, client_secret: str) -> bool:
+        creds = store.load_credentials()
+        creds["client_id"] = client_id.strip()
+        creds["client_secret"] = client_secret.strip()
+        store.save_credentials(creds)
+        return True
+
+    async def start_oauth(self) -> dict:
+        creds = store.load_credentials()
+        if not creds.get("client_id"):
+            raise RuntimeError("Missing client_id")
+        resp = gdrive.start_device_auth(creds["client_id"])
+        # spawn polling task
+        asyncio.create_task(self._poll_oauth(resp))
+        return {
+            "verification_url": resp.get("verification_url", "https://g.co/device"),
+            "user_code": resp["user_code"],
+            "expires_in": resp.get("expires_in", 1800),
+        }
+
+    async def _poll_oauth(self, resp: dict):
+        creds = store.load_credentials()
+        try:
+            tokens = gdrive.poll_for_token(
+                creds["client_id"],
+                creds["client_secret"],
+                resp["device_code"],
+                resp.get("interval", 5),
+                resp.get("expires_in", 1800),
+            )
+            creds["refresh_token"] = tokens["refresh_token"]
+            store.save_credentials(creds)
+            await decky.emit("oauth_complete", {"success": True})
+        except Exception as e:
+            decky.logger.exception("OAuth failed")
+            await decky.emit("oauth_complete", {"success": False, "error": str(e)})
+
+    async def logout(self) -> bool:
+        creds = store.load_credentials()
+        rt = creds.get("refresh_token")
+        if rt:
+            gdrive.revoke_token(rt)
+        store.save_credentials({})
+        return True
+
+    # ---------- Games ----------
+
+    async def get_games(self) -> list:
+        settings = store.load_settings()
+        games = scanner.discover_games()
+        enabled = settings.get("enabled_games", {})
+        paths = settings.get("game_paths", {})
+        for g in games:
+            g["enabled"] = enabled.get(g["id"], False)
+            g["paths"] = paths.get(g["id"], [])
+            g["resolved_paths"] = [str(p) for p in scanner.resolve_paths(g, paths)]
+        return games
+
+    async def set_game_paths(self, game_id: str, paths: list[str]) -> bool:
+        settings = store.load_settings()
+        settings.setdefault("game_paths", {})[game_id] = paths
+        store.save_settings(settings)
+        return True
+
+    async def set_game_enabled(self, game_id: str, enabled: bool) -> bool:
+        settings = store.load_settings()
+        settings.setdefault("enabled_games", {})[game_id] = enabled
+        store.save_settings(settings)
+        return True
+
+    # ---------- Backup / Restore ----------
+
+    async def backup_now(self, game_ids: list[str] | None = None) -> list:
+        return await self.scheduler.manual_backup() if game_ids is None else backup.backup_all(game_ids)
+
+    async def list_snapshots(self, game_id: str) -> list:
+        return backup.list_snapshots(game_id)
+
+    async def restore_snapshot(self, game_id: str, snapshot_id: str) -> dict:
+        return backup.restore_game(game_id, snapshot_id)
+
+    # ---------- Lifecycle ----------
+
     async def _main(self):
         self.loop = asyncio.get_event_loop()
-        decky.logger.info("Hello World!")
+        self.scheduler = scheduler.Scheduler(self._on_scheduled_backup)
+        await self.scheduler.start()
+        decky.logger.info("Save Drive plugin loaded")
 
-    # Function called first during the unload process, utilize this to handle your plugin being stopped, but not
-    # completely removed
+    async def _on_scheduled_backup(self):
+        return backup.backup_all()
+
     async def _unload(self):
-        decky.logger.info("Goodnight World!")
-        pass
+        decky.logger.info("Save Drive unloading")
+        await self.scheduler.stop()
 
-    # Function called after `_unload` during uninstall, utilize this to clean up processes and other remnants of your
-    # plugin that may remain on the system
     async def _uninstall(self):
-        decky.logger.info("Goodbye World!")
-        pass
+        decky.logger.info("Save Drive uninstalling")
+        await self.scheduler.stop()
 
-    async def start_timer(self):
-        self.loop.create_task(self.long_running())
-
-    # Migrations that should be performed before entering `_main()`.
     async def _migration(self):
-        decky.logger.info("Migrating")
-        # Here's a migration example for logs:
-        # - `~/.config/decky-root/root.log` will be migrated to `decky.decky_LOG_DIR/root.log`
-        decky.migrate_logs(os.path.join(decky.DECKY_USER_HOME,
-                                               ".config", "decky-root", "root.log"))
-        # Here's a migration example for settings:
-        # - `~/homebrew/settings/root.json` is migrated to `decky.decky_SETTINGS_DIR/root.json`
-        # - `~/.config/decky-root/` all files and directories under this root are migrated to `decky.decky_SETTINGS_DIR/`
         decky.migrate_settings(
-            os.path.join(decky.DECKY_HOME, "settings", "root.json"),
-            os.path.join(decky.DECKY_USER_HOME, ".config", "decky-root"))
-        # Here's a migration example for runtime data:
-        # - `~/homebrew/root/` all files and directories under this root are migrated to `decky.decky_RUNTIME_DIR/`
-        # - `~/.local/share/decky-root/` all files and directories under this root are migrated to `decky.decky_RUNTIME_DIR/`
+            os.path.join(decky.DECKY_HOME, "settings", "save-drive.json"),
+            os.path.join(decky.DECKY_USER_HOME, ".config", "save-drive"),
+        )
         decky.migrate_runtime(
-            os.path.join(decky.DECKY_HOME, "root"),
-            os.path.join(decky.DECKY_USER_HOME, ".local", "share", "decky-root"))
+            os.path.join(decky.DECKY_HOME, "data", "save-drive"),
+            os.path.join(decky.DECKY_USER_HOME, ".local", "share", "save-drive"),
+        )

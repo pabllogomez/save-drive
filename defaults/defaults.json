@@ -1,0 +1,7 @@
+{
+  "retention_count": 5,
+  "min_interval_hours": 4,
+  "enabled_games": {},
+  "last_backup_ts": 0,
+  "drive_root_name": "SaveDrive"
+}

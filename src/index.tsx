@@ -2,8 +2,12 @@ import {
   ButtonItem,
   PanelSection,
   PanelSectionRow,
-  Navigation,
-  staticClasses
+  ToggleField,
+  TextField,
+  staticClasses,
+  Focusable,
+  DialogButton,
+  showModal,
 } from "@decky/ui";
 import {
   addEventListener,
@@ -11,105 +15,321 @@ import {
   callable,
   definePlugin,
   toaster,
-  // routerHook
-} from "@decky/api"
-import { useState } from "react";
-import { FaShip } from "react-icons/fa";
+} from "@decky/api";
+import { useEffect, useState } from "react";
+import { FaSave } from "react-icons/fa";
 
-// import logo from "../assets/logo.png";
+interface Snapshot {
+  id: string;
+  name: string;
+  created: string;
+  size: string;
+}
 
-// This function calls the python function "add", which takes in two numbers and returns their sum (as a number)
-// Note the type annotations:
-//  the first one: [first: number, second: number] is for the arguments
-//  the second one: number is for the return value
-const add = callable<[first: number, second: number], number>("add");
+interface Game {
+  id: string;
+  name: string;
+  source: string;
+  enabled: boolean;
+  paths: string[];
+  resolved_paths: string[];
+}
 
-// This function calls the python function "start_timer", which takes in no arguments and returns nothing.
-// It starts a (python) timer which eventually emits the event 'timer_event'
-const startTimer = callable<[], void>("start_timer");
+const getSettings = callable<[], any>("get_settings");
+const setSettings = callable<[any], boolean>("set_settings");
+const getCredentialsStatus = callable<[], { authenticated: boolean; email?: string }>("get_credentials_status");
+const setCredentials = callable<[string, string], boolean>("set_credentials");
+const startOAuth = callable<[], { verification_url: string; user_code: string; expires_in: number }>("start_oauth");
+const logout = callable<[], boolean>("logout");
+const getGames = callable<[], Game[]>("get_games");
+const setGameEnabled = callable<[string, boolean], boolean>("set_game_enabled");
+const setGamePaths = callable<[string, string[]], boolean>("set_game_paths");
+const backupNow = callable<[], any[]>("backup_now");
+const listSnapshots = callable<[string], Snapshot[]>("list_snapshots");
+const restoreSnapshot = callable<[string, string], any>("restore_snapshot");
 
-function Content() {
-  const [result, setResult] = useState<number | undefined>();
+function AuthSection() {
+  const [status, setStatus] = useState<{ authenticated: boolean; email?: string } | null>(null);
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
+  const [oauth, setOauth] = useState<{ verification_url: string; user_code: string } | null>(null);
 
-  const onClick = async () => {
-    const result = await add(Math.random(), Math.random());
-    setResult(result);
+  const refresh = async () => setStatus(await getCredentialsStatus());
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  useEffect(() => {
+    const listener = addEventListener("oauth_complete", (ev: any) => {
+      if (ev.success) {
+        toaster.toast({ title: "Save Drive", body: "Google login completed" });
+        setOauth(null);
+        refresh();
+      } else {
+        toaster.toast({ title: "Save Drive", body: `Login failed: ${ev.error || "unknown"}` });
+      }
+    });
+    return () => removeEventListener("oauth_complete", listener);
+  }, []);
+
+  return (
+    <PanelSection title="Google Drive">
+      <PanelSectionRow>
+        {status?.authenticated ? (
+          <div style={{ fontSize: "0.9em", padding: "6px 0" }}>
+            Logged in as {status.email || "Google account"}
+          </div>
+        ) : (
+          <div style={{ fontSize: "0.85em", padding: "6px 0", color: "#aaa" }}>
+            Not logged in. See GOOGLE-SETUP.md.
+          </div>
+        )}
+      </PanelSectionRow>
+      {!status?.authenticated && (
+        <>
+          <PanelSectionRow>
+            <TextField label="Client ID" value={clientId} onChange={(e) => setClientId(e.target.value)} />
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <TextField
+              label="Client Secret"
+              value={clientSecret}
+              onChange={(e) => setClientSecret(e.target.value)}
+            />
+          </PanelSectionRow>
+          <PanelSectionRow>
+            <ButtonItem
+              layout="below"
+              onClick={async () => {
+                await setCredentials(clientId, clientSecret);
+                const info = await startOAuth();
+                setOauth(info);
+                toaster.toast({ title: "Save Drive", body: `Code: ${info.user_code}` });
+              }}
+            >
+              Sign in with Google
+            </ButtonItem>
+          </PanelSectionRow>
+        </>
+      )}
+      {oauth && (
+        <PanelSectionRow>
+          <div style={{ fontSize: "0.85em", padding: "6px 0" }}>
+            Open {oauth.verification_url} and enter: <b>{oauth.user_code}</b>
+          </div>
+        </PanelSectionRow>
+      )}
+      {status?.authenticated && (
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            onClick={async () => {
+              await logout();
+              refresh();
+            }}
+          >
+            Log out
+          </ButtonItem>
+        </PanelSectionRow>
+      )}
+    </PanelSection>
+  );
+}
+
+function GameRow({ game, onChange }: { game: Game; onChange: () => void }) {
+  const [pathsText, setPathsText] = useState(game.paths.join(", "));
+
+  const savePaths = async () => {
+    const paths = pathsText.split(",").map((p) => p.trim()).filter(Boolean);
+    await setGamePaths(game.id, paths);
+    onChange();
+  };
+
+  const openSnapshots = async () => {
+    const snaps = await listSnapshots(game.id);
+    showModal(
+      <SnapshotsModal
+        game={game}
+        snapshots={snaps}
+        onClose={() => {}}
+      />
+    );
   };
 
   return (
-    <PanelSection title="Panel Section">
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          onClick={onClick}
-        >
-          {result ?? "Add two numbers via Python"}
-        </ButtonItem>
-      </PanelSectionRow>
-      <PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          onClick={() => startTimer()}
-        >
-          {"Start Python timer"}
-        </ButtonItem>
-      </PanelSectionRow>
-
-      {/* <PanelSectionRow>
-        <div style={{ display: "flex", justifyContent: "center" }}>
-          <img src={logo} />
-        </div>
-      </PanelSectionRow> */}
-
-      {/*<PanelSectionRow>
-        <ButtonItem
-          layout="below"
-          onClick={() => {
-            Navigation.Navigate("/decky-plugin-test");
-            Navigation.CloseSideMenus();
+    <PanelSectionRow>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "6px 0" }}>
+        <ToggleField
+          label={game.name}
+          checked={game.enabled}
+          onChange={async (checked) => {
+            await setGameEnabled(game.id, checked);
+            onChange();
           }}
-        >
-          Router
-        </ButtonItem>
-      </PanelSectionRow>*/}
+        />
+        <div style={{ fontSize: "0.75em", color: "#888" }}>
+          {game.resolved_paths.length ? game.resolved_paths.join(" • ") : "No save paths found"}
+        </div>
+        <TextField
+          label="Save paths (comma separated)"
+          value={pathsText}
+          onChange={(e) => setPathsText(e.target.value)}
+        />
+        <Focusable style={{ display: "flex", gap: 8 }}>
+          <DialogButton onClick={savePaths}>Save paths</DialogButton>
+          <DialogButton onClick={openSnapshots}>Snapshots</DialogButton>
+        </Focusable>
+      </div>
+    </PanelSectionRow>
+  );
+}
+
+function SnapshotsModal({
+  game,
+  snapshots,
+  onClose,
+}: {
+  game: Game;
+  snapshots: Snapshot[];
+  onClose: () => void;
+}) {
+  const [items, setItems] = useState<Snapshot[]>(snapshots);
+  const [restoring, setRestoring] = useState<string | null>(null);
+
+  const refresh = async () => setItems(await listSnapshots(game.id));
+
+  return (
+    <div style={{ padding: 12 }}>
+      <div className={staticClasses.Title}>{game.name} snapshots</div>
+      {items.length === 0 && <div>No snapshots found</div>}
+      {items.map((s) => (
+        <PanelSectionRow key={s.id}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: "0.85em" }}>
+              {s.name} ({Math.round(Number(s.size || 0) / 1024)} KB)
+            </div>
+            <DialogButton
+              disabled={restoring === s.id}
+              onClick={async () => {
+                setRestoring(s.id);
+                try {
+                  await restoreSnapshot(game.id, s.id);
+                  toaster.toast({ title: "Save Drive", body: `${game.name} restored` });
+                  onClose();
+                } catch (e: any) {
+                  toaster.toast({ title: "Save Drive", body: `Restore failed: ${e.message || e}` });
+                }
+                setRestoring(null);
+              }}
+            >
+              Restore
+            </DialogButton>
+          </div>
+        </PanelSectionRow>
+      ))}
+      <PanelSectionRow>
+        <Focusable style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <DialogButton onClick={refresh}>Refresh</DialogButton>
+          <DialogButton onClick={onClose}>Close</DialogButton>
+        </Focusable>
+      </PanelSectionRow>
+    </div>
+  );
+}
+
+function GamesSection() {
+  const [games, setGames] = useState<Game[]>([]);
+
+  const refresh = async () => setGames(await getGames());
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  return (
+    <PanelSection title="Games">
+      {games.map((g) => (
+        <GameRow key={g.id} game={g} onChange={refresh} />
+      ))}
     </PanelSection>
   );
-};
+}
+
+function ConfigSection() {
+  const [settings, setLocalSettings] = useState<any>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    getSettings().then(setLocalSettings);
+  }, []);
+
+  if (!settings) return null;
+
+  const update = (key: string, value: any) => {
+    const next = { ...settings, [key]: value };
+    setLocalSettings(next);
+    setSettings(next);
+  };
+
+  return (
+    <PanelSection title="Settings">
+      <PanelSectionRow>
+        <TextField
+          label="Snapshots to keep"
+          value={String(settings.retention_count)}
+          onChange={(e) => update("retention_count", Number(e.target.value))}
+        />
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <TextField
+          label="Min hours between backups"
+          value={String(settings.min_interval_hours)}
+          onChange={(e) => update("min_interval_hours", Number(e.target.value))}
+        />
+      </PanelSectionRow>
+      <PanelSectionRow>
+        <ButtonItem
+          layout="below"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try {
+              const results = await backupNow();
+              const ok = results.filter((r) => r.status === "ok").length;
+              const up = results.filter((r) => r.status === "up_to_date").length;
+              toaster.toast({ title: "Save Drive", body: `Backup done: ${ok} uploaded, ${up} up to date` });
+            } catch (e: any) {
+              toaster.toast({ title: "Save Drive", body: `Backup failed: ${e.message || e}` });
+            }
+            setBusy(false);
+          }}
+        >
+          {busy ? "Backing up..." : "Backup now"}
+        </ButtonItem>
+      </PanelSectionRow>
+    </PanelSection>
+  );
+}
+
+function Content() {
+  return (
+    <>
+      <AuthSection />
+      <ConfigSection />
+      <GamesSection />
+    </>
+  );
+}
 
 export default definePlugin(() => {
-  console.log("Template plugin initializing, this is called once on frontend startup")
-
-  // serverApi.routerHook.addRoute("/decky-plugin-test", DeckyPluginRouterTest, {
-  //   exact: true,
-  // });
-
-  // Add an event listener to the "timer_event" event from the backend
-  const listener = addEventListener<[
-    test1: string,
-    test2: boolean,
-    test3: number
-  ]>("timer_event", (test1, test2, test3) => {
-    console.log("Template got timer_event with:", test1, test2, test3)
-    toaster.toast({
-      title: "root got timer_event",
-      body: `${test1}, ${test2}, ${test3}`
-    });
-  });
-
   return {
-    // The name shown in various decky menus
-    name: "Test Plugin",
-    // The element displayed at the top of your plugin's menu
-    titleView: <div className={staticClasses.Title}>Decky Save Drive</div>,
-    // The content of your plugin's menu
+    name: "Save Drive",
+    titleView: <div className={staticClasses.Title}>Save Drive</div>,
     content: <Content />,
-    // The icon displayed in the plugin list
-    icon: <FaShip />,
-    // The function triggered when your plugin unloads
+    icon: <FaSave />,
     onDismount() {
-      console.log("Unloading")
-      removeEventListener("timer_event", listener);
-      // serverApi.routerHook.removeRoute("/decky-plugin-test");
+      console.log("Save Drive unloading");
     },
   };
 });

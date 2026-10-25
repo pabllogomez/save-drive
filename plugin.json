@@ -1,11 +1,11 @@
 {
   "name": "Save Drive",
   "author": "pabllogomez",
-  "flags": ["debug", "_root"],
+  "flags": ["debug"],
   "api_version": 1,
   "publish": {
-    "tags": ["root", "root"],
-    "description": "Decky example plugin.",
-    "image": "https://opengraph.githubassets.com/1/SteamDeckHomebrew/PluginLoader"
+    "tags": ["cloud", "saves", "backup", "google-drive"],
+    "description": "Back up Steam Deck game saves to your own Google Drive.",
+    "image": "https://opengraph.githubassets.com/1/pabllogomez/save-drive"
   }
 }
