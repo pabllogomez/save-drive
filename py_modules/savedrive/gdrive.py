@@ -13,11 +13,14 @@ from typing import Any
 
 def _ssl_context() -> ssl.SSLContext:
     ctx = ssl.create_default_context()
-    for cafile in (
+    bundled = Path(__file__).with_name("cacert.pem")
+    candidates = [
+        str(bundled),
         "/etc/ssl/certs/ca-certificates.crt",
         "/etc/ssl/cert.pem",
         "/etc/pki/tls/certs/ca-bundle.crt",
-    ):
+    ]
+    for cafile in candidates:
         if os.path.isfile(cafile):
             try:
                 ctx.load_verify_locations(cafile=cafile)
