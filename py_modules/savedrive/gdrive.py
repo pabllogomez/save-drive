@@ -1,12 +1,30 @@
 """Google Drive API via stdlib urllib — OAuth device-code flow only."""
 
 import json
+import os
+import ssl
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+
+def _ssl_context() -> ssl.SSLContext:
+    ctx = ssl.create_default_context()
+    for cafile in (
+        "/etc/ssl/certs/ca-certificates.crt",
+        "/etc/ssl/cert.pem",
+        "/etc/pki/tls/certs/ca-bundle.crt",
+    ):
+        if os.path.isfile(cafile):
+            try:
+                ctx.load_verify_locations(cafile=cafile)
+                return ctx
+            except Exception:
+                pass
+    return ctx
 
 OAUTH_DEVICE_CODE_URL = "https://oauth2.googleapis.com/device/code"
 OAUTH_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -18,7 +36,7 @@ DRIVE_UPLOAD_URL = "https://www.googleapis.com/upload/drive/v3/files"
 def _request_json(url: str, method: str = "GET", headers: dict | None = None,
                   data: bytes | None = None, timeout: int = 30) -> tuple[int, Any]:
     req = urllib.request.Request(url, method=method, data=data, headers=headers or {})
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
+    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_context()) as resp:
         code = resp.getcode()
         body = resp.read().decode("utf-8", errors="replace")
         if not body:
@@ -166,7 +184,7 @@ class GDrive:
         req = urllib.request.Request(
             f"{DRIVE_UPLOAD_URL}?uploadType=resumable",
             method="POST", data=data, headers=headers)
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=_ssl_context()) as resp:
             upload_url = resp.headers.get("Location")
         if not upload_url:
             raise RuntimeError("No upload URL returned")
@@ -179,14 +197,14 @@ class GDrive:
         })
         put_req = urllib.request.Request(upload_url, method="PUT",
                                          data=body, headers=put_headers)
-        with urllib.request.urlopen(put_req, timeout=120) as resp:
+        with urllib.request.urlopen(put_req, timeout=120, context=_ssl_context()) as resp:
             _, upload_resp = resp.getcode(), json.loads(resp.read().decode("utf-8"))
         return upload_resp["id"]
 
     def download_file(self, file_id: str, dest: Path) -> None:
         url = f"{DRIVE_FILES_URL}/{file_id}?alt=media"
         req = urllib.request.Request(url, headers=self._headers())
-        with urllib.request.urlopen(req, timeout=120) as resp, open(dest, "wb") as f:
+        with urllib.request.urlopen(req, timeout=120, context=_ssl_context()) as resp, open(dest, "wb") as f:
             while True:
                 chunk = resp.read(64 * 1024)
                 if not chunk:
