@@ -62,20 +62,27 @@ class Plugin:
         return True
 
     async def start_oauth(self) -> dict:
-        creds = store.load_credentials()
-        if not creds.get("client_id") or not creds.get("client_secret"):
-            raise RuntimeError("Missing client_id or client_secret")
-        resp = gdrive.start_device_auth(creds["client_id"])
-        # spawn polling task
-        asyncio.create_task(self._poll_oauth(resp))
-        return {
-            "verification_url": resp.get("verification_url", "https://g.co/device"),
-            "user_code": resp["user_code"],
-            "expires_in": resp.get("expires_in", 1800),
-        }
+        try:
+            creds = store.load_credentials()
+            decky.logger.info(f"start_oauth called; client_id present={bool(creds.get('client_id'))}")
+            if not creds.get("client_id") or not creds.get("client_secret"):
+                raise RuntimeError("Missing client_id or client_secret")
+            resp = gdrive.start_device_auth(creds["client_id"])
+            decky.logger.info(f"device auth response keys={list(resp.keys())}")
+            # spawn polling task
+            asyncio.create_task(self._poll_oauth(resp))
+            return {
+                "verification_url": resp.get("verification_url", "https://g.co/device"),
+                "user_code": resp["user_code"],
+                "expires_in": resp.get("expires_in", 1800),
+            }
+        except Exception:
+            decky.logger.exception("start_oauth failed")
+            raise
 
     async def _poll_oauth(self, resp: dict):
         creds = store.load_credentials()
+        decky.logger.info("OAuth polling started")
         try:
             tokens = gdrive.poll_for_token(
                 creds["client_id"],
@@ -84,11 +91,12 @@ class Plugin:
                 resp.get("interval", 5),
                 resp.get("expires_in", 1800),
             )
+            decky.logger.info(f"OAuth tokens received: {list(tokens.keys())}")
             creds["refresh_token"] = tokens["refresh_token"]
             store.save_credentials(creds)
             await decky.emit("oauth_complete", {"success": True})
         except Exception as e:
-            decky.logger.exception("OAuth failed")
+            decky.logger.exception("OAuth polling failed")
             await decky.emit("oauth_complete", {"success": False, "error": str(e)})
 
     async def logout(self) -> bool:
