@@ -39,7 +39,6 @@ const getSettings = callable<[], any>("get_settings");
 const setSettings = callable<[any], boolean>("set_settings");
 const getCredentialsStatus = callable<[], { authenticated: boolean; email?: string }>("get_credentials_status");
 const getCredentials = callable<[], { client_id: string; client_secret: string }>("get_credentials");
-const setCredentials = callable<[string, string], boolean>("set_credentials");
 const startOAuth = callable<[], { verification_url: string; user_code: string; expires_in: number }>("start_oauth");
 const logout = callable<[], boolean>("logout");
 const getGames = callable<[], Game[]>("get_games");
@@ -81,17 +80,17 @@ function OAuthCodeModal({ url, code, onClose }: { url: string; code: string; onC
 
 function AuthSection() {
   const [status, setStatus] = useState<{ authenticated: boolean; email?: string } | null>(null);
-  const [clientId, setClientId] = useState("");
-  const [clientSecret, setClientSecret] = useState("");
+  const [hasCreds, setHasCreds] = useState(false);
 
-  const refresh = async () => setStatus(await getCredentialsStatus());
+  const refresh = async () => {
+    const s = await getCredentialsStatus();
+    setStatus(s);
+    const c = await getCredentials();
+    setHasCreds(Boolean(c.client_id && c.client_secret));
+  };
 
   useEffect(() => {
     refresh();
-    getCredentials().then((creds) => {
-      setClientId(creds.client_id || "");
-      setClientSecret(creds.client_secret || "");
-    });
   }, []);
 
   useEffect(() => {
@@ -115,48 +114,36 @@ function AuthSection() {
           </div>
         ) : (
           <div style={{ fontSize: "0.85em", padding: "6px 0", color: "#aaa" }}>
-            Not logged in. See GOOGLE-SETUP.md.
+            {hasCreds
+              ? "Credentials loaded. Click Sign in to connect Google Drive."
+              : "Credentials not found. See GOOGLE-SETUP.md."}
           </div>
         )}
       </PanelSectionRow>
       {!status?.authenticated && (
-        <>
-          <PanelSectionRow>
-            <TextField label="Client ID" value={clientId} onChange={(e) => setClientId(e.target.value)} />
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <TextField
-              label="Client Secret"
-              value={clientSecret}
-              onChange={(e) => setClientSecret(e.target.value)}
-            />
-          </PanelSectionRow>
-          <PanelSectionRow>
-            <ButtonItem
-              layout="below"
-              onClick={async () => {
-                try {
-                  if (clientId.trim() && clientSecret.trim()) {
-                    await setCredentials(clientId, clientSecret);
-                  }
-                  const info = await startOAuth();
-                  showModal(
-                    <OAuthCodeModal
-                      url={info.verification_url}
-                      code={info.user_code}
-                      onClose={() => {}}
-                    />
-                  );
-                  toaster.toast({ title: "Save Drive", body: `Code: ${info.user_code}` });
-                } catch (e: any) {
-                  toaster.toast({ title: "Save Drive", body: `OAuth error: ${e.message || e}` });
-                }
-              }}
-            >
-              Sign in with Google
-            </ButtonItem>
-          </PanelSectionRow>
-        </>
+        <PanelSectionRow>
+          <ButtonItem
+            layout="below"
+            disabled={!hasCreds}
+            onClick={async () => {
+              try {
+                const info = await startOAuth();
+                showModal(
+                  <OAuthCodeModal
+                    url={info.verification_url}
+                    code={info.user_code}
+                    onClose={() => {}}
+                  />
+                );
+                toaster.toast({ title: "Save Drive", body: `Code: ${info.user_code}` });
+              } catch (e: any) {
+                toaster.toast({ title: "Save Drive", body: `OAuth error: ${e.message || e}` });
+              }
+            }}
+          >
+            Sign in with Google
+          </ButtonItem>
+        </PanelSectionRow>
       )}
       {status?.authenticated && (
         <PanelSectionRow>
