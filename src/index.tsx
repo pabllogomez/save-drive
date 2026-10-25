@@ -38,6 +38,7 @@ interface Game {
 const getSettings = callable<[], any>("get_settings");
 const setSettings = callable<[any], boolean>("set_settings");
 const getCredentialsStatus = callable<[], { authenticated: boolean; email?: string }>("get_credentials_status");
+const getCredentials = callable<[], { client_id: string; client_secret: string }>("get_credentials");
 const setCredentials = callable<[string, string], boolean>("set_credentials");
 const startOAuth = callable<[], { verification_url: string; user_code: string; expires_in: number }>("start_oauth");
 const logout = callable<[], boolean>("logout");
@@ -58,6 +59,10 @@ function AuthSection() {
 
   useEffect(() => {
     refresh();
+    getCredentials().then((creds) => {
+      setClientId(creds.client_id || "");
+      setClientSecret(creds.client_secret || "");
+    });
   }, []);
 
   useEffect(() => {
@@ -102,10 +107,16 @@ function AuthSection() {
             <ButtonItem
               layout="below"
               onClick={async () => {
-                await setCredentials(clientId, clientSecret);
-                const info = await startOAuth();
-                setOauth(info);
-                toaster.toast({ title: "Save Drive", body: `Code: ${info.user_code}` });
+                try {
+                  if (clientId.trim() && clientSecret.trim()) {
+                    await setCredentials(clientId, clientSecret);
+                  }
+                  const info = await startOAuth();
+                  setOauth(info);
+                  toaster.toast({ title: "Save Drive", body: `Code: ${info.user_code}` });
+                } catch (e: any) {
+                  toaster.toast({ title: "Save Drive", body: `OAuth error: ${e.message || e}` });
+                }
               }}
             >
               Sign in with Google

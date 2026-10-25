@@ -47,6 +47,13 @@ class Plugin:
                 decky.logger.warning(f"Failed to verify credentials: {e}")
         return {"authenticated": has, "email": email}
 
+    async def get_credentials(self) -> dict:
+        creds = store.load_credentials()
+        return {
+            "client_id": creds.get("client_id", ""),
+            "client_secret": creds.get("client_secret", ""),
+        }
+
     async def set_credentials(self, client_id: str, client_secret: str) -> bool:
         creds = store.load_credentials()
         creds["client_id"] = client_id.strip()
@@ -56,8 +63,8 @@ class Plugin:
 
     async def start_oauth(self) -> dict:
         creds = store.load_credentials()
-        if not creds.get("client_id"):
-            raise RuntimeError("Missing client_id")
+        if not creds.get("client_id") or not creds.get("client_secret"):
+            raise RuntimeError("Missing client_id or client_secret")
         resp = gdrive.start_device_auth(creds["client_id"])
         # spawn polling task
         asyncio.create_task(self._poll_oauth(resp))
